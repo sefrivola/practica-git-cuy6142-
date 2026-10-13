@@ -1,0 +1,170 @@
+import requests
+import urllib.parse
+
+route_url = "https://graphhopper.com/api/1/route?"
+key = "2eb47584-db58-40cd-aa32-a3526e4c73b2"
+
+# Diccionarios de configuración para el cálculo del costo
+# Rendimiento promedio estimado en Km por litro
+rendimiento_vehiculo = {
+    "citycar": 15.0,
+    "sedan": 12.0,
+    "suv": 10.0,
+    "4x4": 8.0
+}
+
+# Precios promedio de combustible en Chile (Pesos Chilenos por litro)
+# Puedes ajustar estos valores según el precio actual
+precios_bencina = {
+    "93": 1250,
+    "95": 1300,
+    "97": 1350,
+    "diesel": 1050
+}
+
+def geocoding(location, key):
+    while location == "":
+        location = input("Ingrese la ubicación nuevamente: ")
+
+    geocode_url = "https://graphhopper.com/api/1/geocode?"
+    url = geocode_url + urllib.parse.urlencode({
+        "q": location,
+        "limit": "1",
+        "key": key
+    })
+
+    try:
+        response = requests.get(url, timeout=20)
+        json_data = response.json()
+        json_status = response.status_code
+
+        if json_status == 200 and len(json_data.get("hits", [])) != 0:
+            hit = json_data["hits"][0]
+            lat = hit["point"]["lat"]
+            lng = hit["point"]["lng"]
+            name = hit.get("name", location)
+            country = hit.get("country", "")
+            state = hit.get("state", "")
+            value = hit.get("osm_value", "")
+
+            if state and country:
+                new_loc = name + ", " + state + ", " + country
+            elif country:
+                new_loc = name + ", " + country
+            else:
+                new_loc = name
+
+            return json_status, lat, lng, new_loc
+
+        if json_status != 200:
+            print("Geocode API status:", json_status)
+            print("Error message:", json_data.get("message", "Error desconocido"))
+        else:
+            print("No se encontraron resultados para:", location)
+
+    except (requests.RequestException, ValueError) as error:
+        print("Error de conexión o respuesta:", error)
+
+    return 0, None, None, location
+
+
+while True:
+    print("\n+++++++++++++++++++++++++++++++++++++++++++++")
+    print("Calculadora de Rutas y Costo de Viaje")
+    print("+++++++++++++++++++++++++++++++++++++++++++++")
+
+    # 1. Solicitar tipo de vehículo
+    print("Tipos de vehículo disponibles: citycar, sedan, suv, 4x4")
+    tipo_auto = input("Ingrese su tipo de vehículo: ").strip().lower()
+    if tipo_auto in ("quit", "q"):
+        break
+    if tipo_auto not in rendimiento_vehiculo:
+        tipo_auto = "sedan"
+        print("Vehículo no válido. Se usará 'sedan' por defecto.")
+
+    # 2. Solicitar tipo de bencina
+    print("\nTipos de combustible disponibles: 93, 95, 97, diesel")
+    tipo_combustible = input("Ingrese el tipo de bencina (Chile): ").strip().lower()
+    if tipo_combustible in ("quit", "q"):
+        break
+    if tipo_combustible not in precios_bencina:
+        tipo_combustible = "95"
+        print("Combustible no válido. Se usará '95' por defecto.")
+
+    # El perfil de Graphhopper para vehículos motorizados siempre será 'car'
+    vehicle_profile = "car"
+
+    loc1 = input("\nUbicación de Origen: ").strip()
+    if loc1.lower() in ("quit", "q"):
+        break
+
+    orig = geocoding(loc1, key)
+    if orig[0] != 200:
+        continue
+
+    loc2 = input("Ubicación de Destino: ").strip()
+    if loc2.lower() in ("quit", "q"):
+        break
+
+    dest = geocoding(loc2, key)
+    if dest[0] != 200:
+        continue
+
+    op = "&point=" + str(orig[1]) + "%2C" + str(orig[2])
+    dp = "&point=" + str(dest[1]) + "%2C" + str(dest[2])
+
+    paths_url = (
+        route_url
+        + urllib.parse.urlencode({"key": key, "vehicle": vehicle_profile})
+        + op + dp
+    )
+
+    try:
+        response = requests.get(paths_url, timeout=30)
+        paths_status = response.status_code
+        paths_data = response.json()
+
+        if paths_status == 200 and paths_data.get("paths"):
+            path_data = paths_data["paths"][0]
+
+            print("\n=================================================")
+            print(f"Ruta desde {orig[3]} hasta {dest[3]}")
+            print("=================================================")
+
+            # Cálculo de distancia en km
+            km = path_data["distance"] / 1000
+
+            # Cálculo de tiempo
+            total_seconds = int(path_data["time"] / 1000)
+            hr = total_seconds // 3600
+            mins = (total_seconds % 3600) // 60
+            sec = total_seconds % 60
+
+            # Cálculo de costo
+            rendimiento = rendimiento_vehiculo[tipo_auto]
+            precio_litro = precios_bencina[tipo_combustible]
+            litros_necesarios = km / rendimiento
+            costo_total = litros_necesarios * precio_litro
+
+            # Imprimir resultados formateados
+            print("Distancia de Viaje: {:.2f} km".format(km))
+            print("Duración del Viaje: {:02d}:{:02d}:{:02d}".format(hr, mins, sec))
+            print("Vehículo: {} (Rendimiento: {} km/l)".format(tipo_auto.capitalize(), rendimiento))
+            print("Combustible: {} (Precio: ${}/l)".format(tipo_combustible.capitalize(), precio_litro))
+            print("Costo Total Estimado: ${:.2f}".format(costo_total))
+            print("=================================================")
+
+            # Instrucciones paso a paso
+            for instruction in path_data.get("instructions", []):
+                text = instruction["text"]
+                distance_km = instruction["distance"] / 1000
+
+                print("{0} ( {1:.2f} km )".format(text, distance_km))
+
+            print("=================================================")
+
+        else:
+            print("Error message:", paths_data.get("message", "No se pudo calcular la ruta."))
+
+    except (requests.RequestException, ValueError) as error:
+        print("Error al consultar la API:", error)
